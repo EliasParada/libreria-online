@@ -1,18 +1,62 @@
+from os import name
 import mysql.connector
 import json
-import math
+import datetime
+import random
+import tensorflow as tf
+import pandas as pd
+import numpy as np
 
 from urllib import parse
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
+#Importar el archivo csv
+archivo = pd.read_csv("predicciones.csv", sep=";")
+tX = archivo.iloc[:,0:4].values
+pY = archivo.iloc[:,4:8].values
+#Crear el modelo
+modelo = tf.keras.Sequential()
+#Crear una capa de entrada
+modelo.add(tf.keras.layers.Dense(units=4, input_dim=4, activation='relu'))
+#Crear una capa de salida
+modelo.add(tf.keras.layers.Dense(units=4, activation='sigmoid'))
+#Compilar el modelo
+modelo.compile(optimizer='adam', loss='mean_squared_error', metrics=['binary_accuracy'])
+#Entrenar el modelo
+modelo.fit(tX, pY, epochs=100)
+
+prediccion = np.array([[21,23,40,40]])
+#Predecir el resultado
+prediccion = modelo.predict(prediccion)
+real = np.argmax(prediccion)
+print(real)
+
 class crud():
     def __init__(self):
-        self.sesion = {'inicio': False, 'usuario':'None', 'contra':'None'}
-        self.conn = mysql.connector.connect(host = 'localhost', user = 'root', port = 3307, password = '', database = 'book_store')
+        self.sesion = {'inicio': False, 'id':'None', 'usuario':'None', 'contra':'None'}
+        self.conn = mysql.connector.connect(host = 'localhost', user = 'root', port = '3307', password = '', database = 'book_store')
         if self.conn.is_connected():
             print('Conectado a la base de datos')
         else:
             print('No se pudo conectar a la base de datos')
+
+    def generar_id(self, tabla):
+        # Conseguir el mayor id
+        if tabla == 'libros':
+            sql = 'SELECT MAX(idLibro) AS id FROM libros'
+        elif tabla == 'tipocuenta':
+            sql = 'SELECT MAX(idTipo) AS id FROM tipocuenta'
+        elif tabla == 'generos':
+            sql = 'SELECT MAX(idGenero) AS id FROM generos'
+        resultado = self.ejecutar_mostrar_sql(sql)
+        if resultado[0] == True:
+            id = resultado[1][0]['MAX(id' + tabla + ')']
+            if id == None:
+                id = 0
+            id = int(id) + 1
+            return id
+        else:
+            return False
 
     def ejecutar_sql(self, sql, valores):
         try:
@@ -30,8 +74,6 @@ class crud():
             cursor = self.conn.cursor(dictionary=True)
             cursor.execute(sql)
             resultado = cursor.fetchall()
-            print(cursor.fetchall())
-            print(resultado)
             if len(resultado) == 0:
                 return False, resultado
             else:
@@ -42,12 +84,9 @@ class crud():
 
     def ejecutar_select_datos(self, sql, datos):
         try:
-            print(sql)
-            print(datos)
             cursor = self.conn.cursor(dictionary=True)
             cursor.execute(sql, datos)
             resultado = cursor.fetchall()
-            print(resultado)
             if len(resultado) == 0:
                 return False, resultado
             else:
@@ -59,7 +98,7 @@ class crud():
     def administrar_libros(self, datos):
         if datos['accion'] == 'insertar':
             sql = 'INSERT INTO libros (idLibro, Titulo, Autor, Edicion, Sinopsis, Imagen, Cantidad) VALUES (%s, %s, %s, %s, %s, %s, %s)'
-            valores = (datos['id'], datos['titulo'], datos['autor'], datos['edicion'], datos['sinopsis'], datos['imagen'], datos['cantidad'])
+            valores = (self.generar_id('libros'), datos['titulo'], datos['autor'], datos['edicion'], datos['sinopsis'], datos['imagen'], datos['cantidad'])
             return self.ejecutar_sql(sql, valores)
         
         elif datos['accion'] == 'actualizar':
@@ -73,7 +112,7 @@ class crud():
             return self.ejecutar_sql(sql, valores)
 
         elif datos['accion'] == 'mostrar':
-            sql = 'SELECT libros.idLibro, libros.Titulo, libros.Autor, libros.Edicion, libros.Sinopsis, libros.Imagen, libros.Cantidad, GROUP_CONCAT(generos.Nombre) AS Generos FROM libros LEFT JOIN generolibro ON libros.idLibro = generolibro.idLibro LEFT JOIN generos ON generolibro.idGenero = generos.idGenero GROUP BY libros.idLibro'
+            sql = 'SELECT libros.idLibro, libros.Titulo, libros.Autor, libros.Edicion, libros.Sinopsis, libros.Imagen, libros.Cantidad, GROUP_CONCAT(generos.Nombre) AS Generos, GROUP_CONCAT(generos.idGenero) AS idGeneros FROM libros LEFT JOIN generolibro ON libros.idLibro = generolibro.idLibro LEFT JOIN generos ON generolibro.idGenero = generos.idGenero GROUP BY libros.idLibro'
             return self.ejecutar_mostrar_sql(sql)
 
     def administrar_cuentas(self, datos):
@@ -93,8 +132,39 @@ class crud():
             return self.ejecutar_sql(sql, valores)
 
         elif datos['accion'] == 'mostrar':
-            sql = 'SELECT * FROM usuarios'
+            sql = 'SELECT usuarios.idUsuario, usuarios.Dui, usuarios.Nombre, usuarios.Nickname, usuarios.Telefono, usuarios.Correo, usuarios.Direccion, usuarios.FechaNacimiento, usuarios.Contraseña, usuarios.idTipo, tipocuenta.Descripcion AS Tipo FROM usuarios LEFT JOIN tipocuenta ON usuarios.idTipo = tipocuenta.idTipo'
+            # sql = 'SELECT * FROM usuarios'
             return self.ejecutar_mostrar_sql(sql)
+
+        elif datos['accion'] == 'mostrar_a':
+            sql = 'SELECT usuarios.idUsuario, usuarios.Dui, usuarios.Nombre, usuarios.Nickname, usuarios.Telefono, usuarios.Correo, usuarios.Direccion, usuarios.FechaNacimiento, usuarios.Contraseña, tipocuenta.idTipo, tipocuenta.Descripcion FROM usuarios LEFT JOIN tipocuenta ON usuarios.idTipo = tipocuenta.idTipo WHERE usuarios.idUsuario = %s'
+            valores = (self.sesion['id'],)
+            return self.ejecutar_select_datos(sql, valores)
+
+        elif datos['accion'] == 'mostrar_favoritos':
+            sql = 'SELECT usuarios.Nombre, GROUP_CONCAT(generos.idGenero) AS Generos FROM usuarios LEFT JOIN librosprestados ON usuarios.idUsuario = librosprestados.idUsuario LEFT JOIN libros ON librosprestados.idLibro = libros.idLibro LEFT JOIN generolibro ON libros.idLibro = generolibro.idLibro LEFT JOIN generos ON generolibro.idGenero = generos.idGenero WHERE usuarios.idUsuario = %s GROUP BY generos.idGenero ORDER BY librosprestados.idPrestado DESC LIMIT 10'
+            valores = (self.sesion['id'],)
+            resultado = self.ejecutar_select_datos(sql, valores)
+            generos = []
+            for i in range(len(resultado[1])):
+                generos.append(len(resultado[1][i]['Generos'].split(',')))
+            print('Longitud en generos')
+            print('Longitudes',generos)
+            
+            if len(generos) < 4:
+                for i in range(4-len(generos)):
+                    generos.append(0)
+            print('Longitudes',generos)
+            valores = []
+            for i in range(4):
+                valores.append(max(generos))
+                generos.remove(max(generos))
+            # Desordeamos la lista
+            random.shuffle(valores)
+            print('Valores',valores)
+            prediccion = modelo.predict([valores])
+            prediccion = np.array(prediccion)
+            return resultado[1], prediccion
 
     def administrar_prestamos(self, datos):
         if datos['accion'] == 'insertar':
@@ -191,45 +261,50 @@ class crud():
             return False
         
     def salir(self):
+        self.sesion['inicio'] = False
+        self.sesion['id'] = 'None'
+        self.sesion['usuario'] = 'None'
+        self.sesion['contra'] = 'None'
         if self.sesion['inicio'] == False:
             return True
         else:
             return False
 
     def administrar_sesion(self, datos):
-        print(self.sesion)
-        # if datos['iniciar']:
         sql = 'SELECT * FROM usuarios WHERE Nickname = %s AND Contraseña = %s'
         valores = (datos['usuario'], datos['contra'])
         resultado = self.ejecutar_select_datos(sql, valores)
         if resultado[0] == True:
             self.sesion['inicio'] = True
+            self.sesion['id'] = resultado[1][0]['idUsuario']
             self.sesion['usuario'] = resultado[1][0]['Nickname']
             self.sesion['contra'] = resultado[1][0]['Contraseña']
             return True
         else:
             return False
-        # else:
-        #     return True
 
 
 crud = crud()
 
 class servidorBasico(SimpleHTTPRequestHandler):
     def do_GET(self):
-        print(crud.registro())
-        print(self.path)
+        #Redirigir para el path /
         if self.path == '/':
-            if crud.registro() == False:
-                print('error')
-                self.path = '/login.html'
-                return SimpleHTTPRequestHandler.do_GET(self)
-            else:
-                print('entro')
+            if crud.registro() == True:
                 self.path = '/index.html'
                 return SimpleHTTPRequestHandler.do_GET(self)
-
-        #Si el path es /login entonces mostrar el login.html
+            else:
+                self.path = '/login.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+        #Redirigir para el path /index
+        elif self.path == '/index':
+            if crud.registro() == True:
+                self.path = '/index.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+            else:
+                self.path = '/login.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+        #Redirigir para el path /login
         elif self.path == '/login':
             if crud.registro() == True:
                 self.path = '/index.html'
@@ -237,110 +312,155 @@ class servidorBasico(SimpleHTTPRequestHandler):
             else:
                 self.path = '/login.html'
                 return SimpleHTTPRequestHandler.do_GET(self)
-        
-        #Si el path es /logout entonces cerrar la sesion
-        elif self.path == '/logout':
-            crud.registro({'inicio': True})
-            self.path = '/login.html'
-            return SimpleHTTPRequestHandler.do_GET(self)
-
-        #Si el path es estanteria, recomendaciones, tendencias o cuenta y se esta logeado entonces mostrar el el path que se solicita
-        elif self.path == '/index' or self.path == '/estanteria' or self.path == '/recomendaciones' or self.path == '/tendencias' or self.path == '/cuenta':
+        #Redirigir para el path /cuenta
+        elif self.path == '/cuenta':
             if crud.registro() == True:
-                if self.path == '/index':
-                    self.path = '/index.html'
-                    return SimpleHTTPRequestHandler.do_GET(self)
-                if self.path == '/cuenta':
-                    self.path = '/cuenta.html'
-                    return SimpleHTTPRequestHandler.do_GET(self)
-                elif self.path == '/estanteria':
-                    self.path = '/estanteria.html'
-                    return SimpleHTTPRequestHandler.do_GET(self)
-                elif self.path == '/recomendaciones':
-                    self.path = '/recomendaciones.html'
-                    return SimpleHTTPRequestHandler.do_GET(self)
-                elif self.path == '/tendencias':
-                    self.path = '/tendencias.html'
-                    return SimpleHTTPRequestHandler.do_GET(self)
+                self.path = '/cuenta.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+            else:
+                self.path = '/login.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+        #Redirigir para el path /estanteria
+        elif self.path == '/estanteria':
+            if crud.registro() == True:
+                self.path = '/estanteria.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+            else:
+                self.path = '/login.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+        #Redirigir para el path /recomedaciones
+        elif self.path == '/recomendaciones':
+            if crud.registro() == True:
+                self.path = '/recomendaciones.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+            else:
+                self.path = '/login.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+        #Redirigir para el path /tendencias
+        elif self.path == '/tendencias':
+            if crud.registro() == True:
+                self.path = '/tendencias.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+            else:
+                self.path = '/login.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+        #Redirigir para el path /prestamos
+        elif self.path == '/prestamos':
+            if crud.registro() == True:
+                self.path = '/prestamos.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+            else:
+                self.path = '/login.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+        #Redirigir para el path /libroasad
+        elif self.path == '/librosad':
+            if crud.registro() == True:
+                self.path = '/librosad.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+            else:
+                self.path = '/login.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+        #Redirigir para el path /usuariosad
+        elif self.path == '/usuariosad':
+            if crud.registro() == True:
+                self.path = '/usuariosad.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+            else:
+                self.path = '/login.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
+        #Redirigir para el path /prestamosad
+        elif self.path == '/prestamosad':
+            if crud.registro() == True:
+                self.path = '/prestamosad.html'
+                return SimpleHTTPRequestHandler.do_GET(self)
             else:
                 self.path = '/login.html'
                 return SimpleHTTPRequestHandler.do_GET(self)
 
-        elif self.path == '/mostra_libros':
-            if crud.registro() == True:
-                result = crud.administrar_libros({'accion':'mostrar'})
-                print(result)
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(json.dumps(result).encode('utf-8'))
-            else:
-                self.path = '/login.html'
-                return SimpleHTTPRequestHandler.do_GET(self)
+        elif self.path == '/mostrar_libros':
+            resultado = crud.administrar_libros({'accion':'mostrar'})
+            print(resultado[0])
+            for libro in resultado[1]:
+                libro['Edicion'] = str(libro['Edicion'])
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(dict(resultado = resultado[1])).encode('utf-8'))
+
+        elif self.path == '/mostrar_usuarios_a':
+            resultado = crud.administrar_cuentas({'accion':'mostrar_a'})
+            print(resultado)
+            for usuario in resultado[1]:
+                usuario['FechaNacimiento'] = str(usuario['FechaNacimiento'])
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(dict(resultado = resultado[1])).encode('utf-8'))
+
+        elif self.path == '/mostrar_usuarios':
+            resultado = crud.administrar_cuentas({'accion':'mostrar'})
+            print(resultado)
+            for usuario in resultado[1]:
+                usuario['FechaNacimiento'] = str(usuario['FechaNacimiento'])
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(dict(resultado = resultado[1])).encode('utf-8'))
+
+        elif self.path == '/mostrar_recomendaciones':
+            resultado = crud.administrar_cuentas({'accion':'mostrar_favoritos'})
+            print(resultado[1][0])
+            self.send_response(200)
+            self.end_headers()
+            #Convertir el ndarray en un diccionario
+            prediccion = {}
+            for i in range(len(resultado[1][0])):
+                prediccion[i] = resultado[1][0][i]
+            print(prediccion)
+            self.wfile.write(json.dumps(prediccion).encode('utf-8'))
+            # #Convertir el ndarray a un array normal
+            # prediccion = []
+            # for recomendacion in resultado[1][0]:
+            #     prediccion.append(recomendacion)
+            # print(prediccion)
+            
+            # self.wfile.write(prediccion.encode('utf-8'))
     
     def do_POST(self):
         content_length = int(self.headers['Content-Length'])
-        body = self.rfile.read(content_length)
-        body = parse.unquote(body.decode('utf-8'))
-        print(body)
-        body = json.loads(body)
-        print(self.path)
+        data = self.rfile.read(content_length)
+        data = data.decode('utf-8')
+        data = json.loads(data)
 
         if self.path == '/iniciar_sesion':
-            result = crud.administrar_sesion(body)
-            if result:
+            respuesta = crud.administrar_sesion(data)
+            if respuesta == True:
+                print('Inicio de sesion correcto')
                 self.send_response(200)
                 self.end_headers()
-                self.wfile.write(bytes(json.dumps({'inicio':result}), 'utf-8'))
+                self.wfile.write(json.dumps(dict({'inicio':True})).encode('utf-8'))
             else:
-                print('Error')
-        
-        elif self.path == '/logout':
-            if crud.registro() == True:
-                crud.salir()
-                self.path = '/login.html'
-                return SimpleHTTPRequestHandler.do_GET(self)
-            
-        elif self.path == '/administrar_usuarios':
-            result = crud.administrar_cuentas(body)
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(bytes(json.dumps(result), 'utf-8'))
+                print('No se ha podido iniciar sesion')
 
-        elif self.path == '/administrar_generos':
-            result = crud.administra_generos(body)
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(bytes(json.dumps(result), 'utf-8'))
-        
-        elif self.path == '/administrar_tipocuenta':
-            result = crud.administrar_tipo_cuentas(body)
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(bytes(json.dumps(result), 'utf-8'))
-        
-        elif self.path == '/administrar_libros':
-            result = crud.administrar_libros(body)
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(bytes(json.dumps(result), 'utf-8'))
+        elif self.path == '/salir':
+            respuesta = crud.salir()
+            if respuesta == True:
+                print('Sesion cerrada')
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps(dict({'salir':True})).encode('utf-8'))
+            else:
+                print('No se ha podido cerrar sesion')
 
-        elif self.path == '/administrar_prestamos':
-            result = crud.administrar_prestamos(body)
+        if self.path == '/administrar_libro':
+            respuesta = crud.administrar_libros(data)
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(bytes(json.dumps(result), 'utf-8'))
-        
-        elif self.path == '/administrar_estanterias':
-            result = crud.administrar_estanterias(body)
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(bytes(json.dumps(result), 'utf-8'))
+            self.wfile.write(json.dumps(dict(respuesta = respuesta)).encode('utf-8'))
 
-        elif self.path == '/administrar_recomendaciones' or self.path == '/administrar_tendencias':
-            result = crud.administrar_prediccion(body)
+        if self.path == '/administrar_usuarios':
+            respuesta = crud.administrar_cuentas(data)
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(bytes(json.dumps(result), 'utf-8'))
+            self.wfile.write(json.dumps(dict(respuesta = respuesta)).encode('utf-8'))
+
 
 print('Iniciando servidor')
 httpd = HTTPServer(('localhost', 3000), servidorBasico)

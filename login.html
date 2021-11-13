@@ -104,6 +104,7 @@
             });
         }
         function iniciar(datos) {
+            console.log(datos);
             $.post('http://localhost:3000/iniciar_sesion',JSON.stringify(datos) ,(res) => {
                 console.log(res);
                 if(res.inicio == true) {
