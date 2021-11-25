@@ -6,6 +6,8 @@ import random
 import tensorflow as tf
 import pandas as pd
 import numpy as np
+from PIL import Image
+from datetime import timedelta
 
 from urllib import parse
 from http.server import HTTPServer, SimpleHTTPRequestHandler
@@ -17,6 +19,7 @@ pY = archivo.iloc[:,4:8].values
 #Crear el modelo
 modelo = tf.keras.Sequential()
 #Crear una capa de entrada
+# modelo.add(tf.keras.layers.Sparc)
 modelo.add(tf.keras.layers.Dense(units=4, input_dim=4, activation='relu'))
 #Crear una capa de salida
 modelo.add(tf.keras.layers.Dense(units=4, activation='sigmoid'))
@@ -50,6 +53,8 @@ class crud():
             sql = 'SELECT MAX(idGenero) AS id FROM generos'
         elif tabla == 'usuarios':
             sql = 'SELECT MAX(idUsuario) AS id FROM usuarios'
+        elif tabla == 'librosprestados':
+            sql = 'SELECT MAX(idPrestado) AS id FROM librosprestados'
         resultado = self.ejecutar_mostrar_sql(sql)
         print(resultado)
         if resultado[0] == True:
@@ -88,6 +93,7 @@ class crud():
 
     def ejecutar_select_datos(self, sql, datos):
         try:
+            print(sql, datos)
             cursor = self.conn.cursor(dictionary=True)
             cursor.execute(sql, datos)
             resultado = cursor.fetchall()
@@ -103,13 +109,13 @@ class crud():
         if datos['accion'] == 'insertar':
             sql = 'INSERT INTO libros (idLibro, Titulo, Autor, Edicion, Sinopsis, Imagen, Cantidad) VALUES (%s, %s, %s, %s, %s, %s, %s)'
             id = self.generar_id('libros')
-            valores = (id, datos['titulo'], datos['autor'], datos['edicion'], datos['sinopsis'], datos['imagen'], datos['cantidad'])
+            valores = (id, datos['titulo'], datos['autor'], datos['edicion'], datos['sinopsis'], 'imagenes/portadas/front'+str(id)+'.jpg', datos['cantidad'])
             if self.ejecutar_sql(sql, valores) == True:
                 for genero in datos['generos']:
                     sql = 'INSERT INTO generolibro (idLibro, idGenero) VALUES (%s, %s)'
                     valores = (id, genero)
                     self.ejecutar_sql(sql, valores)
-                return True
+                return True, id
             else:
                 return False
         
@@ -173,25 +179,31 @@ class crud():
             return self.ejecutar_select_datos(sql, valores)
 
         elif datos['accion'] == 'mostrar_favoritos':
+            print(self.sesion)
             sql = 'SELECT usuarios.Nombre, GROUP_CONCAT(generos.idGenero) AS Generos FROM usuarios LEFT JOIN librosprestados ON usuarios.idUsuario = librosprestados.idUsuario LEFT JOIN libros ON librosprestados.idLibro = libros.idLibro LEFT JOIN generolibro ON libros.idLibro = generolibro.idLibro LEFT JOIN generos ON generolibro.idGenero = generos.idGenero WHERE usuarios.idUsuario = %s GROUP BY generos.idGenero ORDER BY librosprestados.idPrestado DESC LIMIT 10'
             valores = (self.sesion['id'],)
             resultado = self.ejecutar_select_datos(sql, valores)
             print(resultado)
             generos = []
-            for i in range(len(resultado[1])):
-                generos.append(len(resultado[1][i]['Generos'].split(',')))
+            etiquetas = []
+            if resultado != False:
+                if resultado[0]['Generos'] != None:
+                    for i in range(len(resultado[1])):
+                        generos.append(len(resultado[1][i]['Generos'].split(',')))
+                        
             print('Longitud en generos')
             print('Longitudes',generos)
             
-            if len(generos) < 4:
-                for i in range(4-len(generos)):
+            if len(generos) < 10:
+                for i in range(10-len(generos)):
                     generos.append(0)
             print('Longitudes',generos)
             valores = []
+            # 
             for i in range(4):
                 valores.append(max(generos))
                 generos.remove(max(generos))
-            # Desordeamos la lista
+            
             random.shuffle(valores)
             print('Valores',valores)
             prediccion = modelo.predict([valores])
@@ -200,12 +212,19 @@ class crud():
 
     def administrar_prestamos(self, datos):
         if datos['accion'] == 'insertar':
-            sql = 'UPDATE libros SET Cantidad = Cantidad - 1 WHERE idLibro = %s'
+            sql = 'SELECT Cantidad FROM libros WHERE idLibro = %s'
             valores = (datos['idLibro'],)
-            self.ejecutar_sql(sql, valores)
-            sql = 'INSERT INTO librosprestados (idPrestado, idUsuario, idLibro, FechaPrestamo, FechaDevolusion) VALUES (%s, %s, %s, %s, %s)'
-            valores = (datos['id'], datos['idUsuario'], datos['idLibro'], datos['fechaPrestamo'], datos['fechaDevolusion'])
-            return self.ejecutar_sql(sql, valores)
+            if self.ejecutar_select_datos(sql, valores)[0] != False:
+                sql = 'UPDATE libros SET Cantidad = Cantidad - 1 WHERE idLibro = %s'
+                valores = (datos['idLibro'],)
+                self.ejecutar_sql(sql, valores)
+                print(self.sesion)
+                id = self.generar_id('librosprestados')
+                fecha_prestamo = datetime.datetime.now() + timedelta(days=1)
+                fecha_devolucion = fecha_prestamo + timedelta(days=30)
+                sql = 'INSERT INTO librosprestados (idPrestado, idUsuario, idLibro, FechaPrestamo, FechaDevolusion) VALUES (%s, %s, %s, %s, %s)'
+                valores = (id, self.sesion['id'], datos['idLibro'], fecha_prestamo, fecha_devolucion)
+                return self.ejecutar_sql(sql, valores)
         
         elif datos['accion'] == 'actualizar':
             sql = 'UPDATE librosprestados SET idUsuario = %s, idLibro = %s, FechaPrestamo = %s, FechaDevolusion = %s WHERE idPrestado = %s'
@@ -220,6 +239,11 @@ class crud():
         elif datos['accion'] == 'mostrar':
             sql = 'SELECT librosprestados.idPrestado, libros.idLibro, libros.Titulo, usuarios.idUsuario, usuarios.Nombre, tipocuenta.Descripcion AS Tipo_Cuenta, librosprestados.FechaPrestamo, librosprestados.FechaDevolusion FROM librosprestados INNER JOIN libros ON librosprestados.idLibro = libros.idLibro INNER JOIN usuarios ON librosprestados.idUsuario = usuarios.idUsuario INNER JOIN tipocuenta ON usuarios.idTipo = tipocuenta.idTipo'
             return self.ejecutar_mostrar_sql(sql)
+
+        elif datos['accion'] == 'mostrar_a':
+            sql = 'SELECT libros.idLibro, libros.Titulo, libros.Autor, libros.Edicion, libros.Sinopsis, libros.Imagen, libros.Cantidad, GROUP_CONCAT(generos.Nombre) AS Generos, GROUP_CONCAT(generos.idGenero) AS idGeneros, usuarios.idUsuario, usuarios.Nombre, librosprestados.FechaPrestamo, librosprestados.FechaDevolusion FROM librosprestados INNER JOIN libros ON librosprestados.idLibro = libros.idLibro INNER JOIN usuarios ON librosprestados.idUsuario = usuarios.idUsuario INNER JOIN generolibro ON libros.idLibro = generolibro.idLibro INNER JOIN generos ON generolibro.idGenero = generos.idGenero WHERE librosprestados.idUsuario = %s GROUP BY libros.idLibro ORDER BY idPrestado DESC'
+            valores = (self.sesion['id'],)
+            return self.ejecutar_select_datos(sql, valores)
 
     def administrar_tipo_cuentas(self, datos):
         if datos['accion'] == 'insertar':
@@ -254,7 +278,6 @@ class crud():
             return self.ejecutar_sql(sql, valores)
 
         elif datos['accion'] == 'eliminar':
-            # Primero eliminamos los libros que tengan este genero en generolibro
             sql = 'DELETE FROM generolibro WHERE idGenero = %s'
             valores = (datos['id'],)
             if self.ejecutar_sql(sql, valores) == True:
@@ -270,23 +293,28 @@ class crud():
 
     def administrar_estanterias(self, datos):
         if datos['accion'] == 'insertar':
-            sql = 'INSERT INTO estanteria (idUsuario, idLibro) VALUES (%s, %s)'
-            valores = (datos['idUsuario'], datos['idLibro'])
+            sql = 'INSERT INTO estanteria (idUsario, idLibro) VALUES (%s, %s)'
+            valores = (self.sesion['id'], datos['idLibro'])
             return self.ejecutar_sql(sql, valores)
         
         elif datos['accion'] == 'actualizar':
-            sql = 'UPDATE estanteria SET idUsuario = %s, idLibro = %s WHERE idUsuario = %s AND idLibro = %s'
+            sql = 'UPDATE estanteria SET idUsario = %s, idLibro = %s WHERE idUsario = %s AND idLibro = %s'
             valores = (datos['idUsuario'], datos['idLibro'], datos['idUsuario'], datos['idLibro'])
             return self.ejecutar_sql(sql, valores)
 
         elif datos['accion'] == 'eliminar':
-            sql = 'DELETE FROM estanteria WHERE idUsuario = %s AND idLibro = %s'
+            sql = 'DELETE FROM estanteria WHERE idUsario = %s AND idLibro = %s'
             valores = (datos['idUsuario'], datos['idLibro'])
             return self.ejecutar_sql(sql, valores)
 
         elif datos['accion'] == 'mostrar':
-            sql = 'SELECT estanteria.idUsuario, estanteria.idLibro, libros.idLibro, libros.Titulo, usuarios.idUsuario, usuarios.Nombre FROM estanteria INNER JOIN libros ON estanteria.idLibro = libros.idLibro INNER JOIN usuarios ON estanteria.idUsuario = usuarios.idUsuario'
+            sql = 'SELECT estanteria.idUsario, estanteria.idLibro, libros.idLibro, libros.Titulo, usuarios.idUsuario, usuarios.Nombre FROM estanteria INNER JOIN libros ON estanteria.idLibro = libros.idLibro INNER JOIN usuarios ON estanteria.idUsario = usuarios.idUsuario'
             return self.ejecutar_mostrar_sql(sql)
+
+        elif datos['accion'] == 'mostrar_a':
+            sql = 'SELECT libros.idLibro, libros.Titulo, libros.Autor, libros.Edicion, libros.Sinopsis, libros.Imagen, libros.Cantidad, GROUP_CONCAT(generos.Nombre) AS Generos, GROUP_CONCAT(generos.idGenero) AS idGeneros, usuarios.idUsuario, usuarios.Nombre FROM estanteria INNER JOIN libros ON estanteria.idLibro = libros.idLibro INNER JOIN usuarios ON estanteria.idUsario = usuarios.idUsuario INNER JOIN generolibro ON libros.idLibro = generolibro.idLibro INNER JOIN generos ON generolibro.idGenero = generos.idGenero WHERE estanteria.idUsario = %s GROUP BY libros.idLibro ORDER BY idLibro DESC'
+            valores = (self.sesion['id'],)
+            return self.ejecutar_select_datos(sql, valores)
 
     def administrar_prediccion(self, datos):
         sql = 'SELECT libros.Titulo, generos.Nombre, libro.Autor, libros.Sinopsis, libros.Imagen FROM libros INNER JOIN generolibro ON libros.idLibro = generolibro.idLibro INNER JOIN generos ON generolibro.idGenero = generos.idGenero INNER JOIN autores ON libros.idAutor = autores.idAutor WHERE generos.idGenero = %s'
@@ -354,7 +382,7 @@ class servidorBasico(SimpleHTTPRequestHandler):
         # Redirigir para el path /administrar
         elif self.path == '/administrar':
             if crud.registro() == True:
-                print(crud.admin())
+                print('Administrador:',crud.admin())
                 if crud.admin() == True:
                     self.path = '/administrar.html'
                     return SimpleHTTPRequestHandler.do_GET(self)
@@ -503,6 +531,26 @@ class servidorBasico(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(dict(resultado = resultado[1])).encode('utf-8'))
 
+        elif self.path == '/mostrar_prestamos_a':
+            resultado = crud.administrar_prestamos({'accion':'mostrar_a'})
+            print(resultado[1])
+            for prestamo in resultado[1]:
+                prestamo['Edicion'] = str(prestamo['Edicion'])
+                prestamo['FechaPrestamo'] = str(prestamo['FechaPrestamo'])
+                prestamo['FechaDevolusion'] = str(prestamo['FechaDevolusion'])
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(dict(resultado = resultado[1])).encode('utf-8'))
+
+        elif self.path == '/mostrar_estanteria_a':
+            resultado = crud.administrar_estanterias({'accion':'mostrar_a'})
+            print(resultado[1])
+            for estanteria in resultado[1]:
+                estanteria['Edicion'] = str(estanteria['Edicion'])
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(dict(resultado = resultado[1])).encode('utf-8'))
+
         else:
             return SimpleHTTPRequestHandler.do_GET(self)
     
@@ -532,25 +580,47 @@ class servidorBasico(SimpleHTTPRequestHandler):
             else:
                 print('No se ha podido cerrar sesion')
 
-        if self.path == '/administrar_libro':
-            print(data)
+        elif self.path == '/administrar_libro':
             respuesta = crud.administrar_libros(data)
+            if data['accion'] == 'insertar' and respuesta[0] == True:
+                matriz = data["imagen"]
+                matriz = [matriz[i:i+300] for i in range(0, len(matriz), 300)]
+
+                matriz = np.array(matriz)
+                print(matriz.shape)
+                id_libro = respuesta[1]
+                im = Image.fromarray((matriz).astype(np.uint8))
+                im.save("imagenes/portadas/front"+str(id_libro)+".jpg")
+                print(matriz.shape)
+
             self.send_response(200)
             self.end_headers()
             self.wfile.write(json.dumps(dict(respuesta = respuesta)).encode('utf-8'))
 
-        if self.path == '/administrar_usuarios':
+        elif self.path == '/administrar_usuarios':
             respuesta = crud.administrar_cuentas(data)
             self.send_response(200)
             self.end_headers()
             self.wfile.write(json.dumps(dict(respuesta = respuesta)).encode('utf-8'))
 
-        if self.path == '/administrar_generos':
+        elif self.path == '/administrar_generos':
             respuesta = crud.administra_generos(data)
             self.send_response(200)
             self.end_headers()
             self.wfile.write(json.dumps(dict(respuesta = respuesta)).encode('utf-8'))
 
+        elif self.path == '/prestar':
+            print(data)
+            respuesta = crud.administrar_prestamos(data)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(dict(respuesta = respuesta)).encode('utf-8'))
+
+        elif self.path == '/agregar_estanteria':
+            respuesta = crud.administrar_estanterias(data)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(dict(respuesta = respuesta)).encode('utf-8'))
 
 print('Iniciando servidor')
 httpd = HTTPServer(('localhost', 3000), servidorBasico)

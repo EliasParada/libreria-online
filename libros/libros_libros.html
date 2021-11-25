@@ -45,7 +45,8 @@
             <div class="col-md-6">
                 <div class="form-group">
                     <label for="imgLibro">Imagen</label>
-                    <input type="file" class="form-control-file" id="imgLibro" name="imgLibro">
+                    <input type="file" class="form-control-file" id="imgLibro" name="imgLibro" required>
+                    <canvas id="canvasLibro" hidden></canvas>
                 </div>
             </div>
             <div class="col-md-6">
@@ -106,8 +107,38 @@
     }
     $(document).ready(e => {
         mostrarGeneros();
+
+        $('#imgLibro').change(e => {
+            let img = new Image();
+            let file = e.target.files[0];
+            let reader = new FileReader();
+            reader.onload = function(e) {
+                img.src = e.target.result;
+                img.onload = function() {
+                    let canvas = document.getElementById('canvasLibro');
+                    let ctx = canvas.getContext('2d');
+                    canvas.width = 300;
+                    canvas.height = 300;
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                }
+            }
+            reader.readAsDataURL(file);
+        });
         $('#frmLibros').submit(e => {
             e.preventDefault();
+            let canvas = document.getElementById('canvasLibro');
+            let ctx = canvas.getContext('2d');
+            console.log(canvas, canvas.width, canvas.height);
+            let imagen = [];
+            for(i=0; i<canvas.width; i++){
+                for(j=0; j< canvas.height; j++){
+                    let imgdata = ctx.getImageData(j,i,1,1).data,
+                        r = imgdata[0],
+                        g = imgdata[1],
+                        b = imgdata[2];
+                    imagen.push([r,g,b]);
+                }
+            }
             let accion = $('#frmLibros').data('accion'),
                 id = $('#frmLibros').data('id'),
                 titulo = $('#txtTituloLibro').val(),
@@ -116,7 +147,6 @@
                 sinopsis = $('#txtSinopsisLibro').val(),
                 genero = $('#sltGeneroLibro').val(),
                 cantidad = $('#txtCantidadLibro').val(),
-                imagen = $('#imgLibro').val(),
                 datos = {
                     accion: accion,
                     id: id,
@@ -126,7 +156,7 @@
                     sinopsis: sinopsis,
                     generos: genero,
                     cantidad: cantidad,
-                    imagen: 'imagenes/portadas/1.jpg'
+                    imagen: imagen
                 };
             console.log(datos);
             $.post('http://localhost:3000/administrar_libro', JSON.stringify(datos), (libro) => {
