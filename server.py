@@ -3,36 +3,26 @@ import mysql.connector
 import json
 import datetime
 import random
-import tensorflow as tf
-import pandas as pd
 import numpy as np
 from PIL import Image
 from datetime import timedelta
 
+import crudestanteria
+import crudgeneros
+import crudlibros
+import crudusuarios
+import crudprestamos
+import crudtipocuenta
+
+crudestanteria = crudestanteria.crudestanteria()
+crudgeneros = crudgeneros.curdgeneros()
+crudlibros = crudlibros.crudlibros()
+crudusuarios = crudusuarios.crudusuarios()
+crudprestamos = crudprestamos.crudprestamos()
+crudtipocuenta = crudtipocuenta.crudtipocuenta()
+
 from urllib import parse
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-
-#Importar el archivo csv
-archivo = pd.read_csv("predicciones.csv", sep=";")
-tX = archivo.iloc[:,0:4].values
-pY = archivo.iloc[:,4:8].values
-#Crear el modelo
-modelo = tf.keras.Sequential()
-#Crear una capa de entrada
-# modelo.add(tf.keras.layers.Sparc)
-modelo.add(tf.keras.layers.Dense(units=4, input_dim=4, activation='relu'))
-#Crear una capa de salida
-modelo.add(tf.keras.layers.Dense(units=4, activation='sigmoid'))
-#Compilar el modelo
-modelo.compile(optimizer='adam', loss='mean_squared_error', metrics=['binary_accuracy'])
-#Entrenar el modelo
-modelo.fit(tX, pY, epochs=100)
-
-prediccion = np.array([[21,23,40,40]])
-#Predecir el resultado
-prediccion = modelo.predict(prediccion)
-real = np.argmax(prediccion)
-print(real)
 
 class crud():
     def __init__(self):
@@ -363,6 +353,7 @@ crud = crud()
 
 class servidorBasico(SimpleHTTPRequestHandler):
     def do_GET(self):
+        self.sesion = {'inicio': False, 'id':'None', 'usuario':'None', 'tipo':'None','contra':'None'}
         #Redirigir para el path /
         if self.path == '/':
             if crud.registro() == True:
@@ -466,7 +457,7 @@ class servidorBasico(SimpleHTTPRequestHandler):
                 return SimpleHTTPRequestHandler.do_GET(self)
 
         elif self.path == '/mostrar_libros':
-            resultado = crud.administrar_libros({'accion':'mostrar'})
+            resultado = crudlibros.administrar_libros({'accion':'mostrar'})
             print(resultado[0])
             for libro in resultado[1]:
                 libro['Edicion'] = str(libro['Edicion'])
@@ -475,7 +466,7 @@ class servidorBasico(SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(dict(resultado = resultado[1])).encode('utf-8'))
 
         elif self.path == '/mostrar_usuarios_a':
-            resultado = crud.administrar_cuentas({'accion':'mostrar_a'})
+            resultado = crudusuarios.administrar_cuentas({'accion':'mostrar_a', 'id':crud.sesion['id']})
             print(resultado)
             for usuario in resultado[1]:
                 usuario['FechaNacimiento'] = str(usuario['FechaNacimiento'])
